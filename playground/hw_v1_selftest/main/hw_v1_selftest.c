@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
@@ -9,6 +10,7 @@
 #include "soc/rtc.h"
 
 #define LED_GPIO                    3
+#define BTN_GPIO                    13
 #define I2C_MASTER_SCL_IO           12
 #define I2C_MASTER_SDA_IO           11
 #define I2C_MASTER_NUM              I2C_NUM_0
@@ -17,6 +19,32 @@
 #define I2C_MASTER_RX_BUF_DISABLE   0
 
 static const char *TAG = "SELF_TEST";
+
+static QueueHandle_t gpio_evt_queue = NULL;
+
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+}
+
+static void button_task(void* arg)
+{
+    uint32_t io_num;
+    static uint32_t last_press_time = 0;
+    const uint32_t debounce_time_ms = 50;
+
+    for(;;) {
+        if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            if ((current_time - last_press_time) > debounce_time_ms) {
+                ESP_LOGI(TAG, "Button on GPIO %ld pushed.", io_num);
+                last_press_time = current_time;
+            }
+        }
+    }
+}
+
 
 static void led_blink(int times, int interval_ms)
 {
@@ -66,18 +94,37 @@ static void i2c_scan(void)
 
 void app_main(void)
 {
+    // Turn on LED as soon as MCU boots up
     gpio_reset_pin(LED_GPIO);
     gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_GPIO, 0);
-    
+    gpio_set_level(LED_GPIO, 0); // LED ON
+
+    // Button interrupt setup
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+    io_conf.pin_bit_mask = (1ULL<<BTN_GPIO);
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(button_task, "button_task", 2048, NULL, 10, NULL);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(BTN_GPIO, gpio_isr_handler, (void*) BTN_GPIO);
+
+
     // 1. Initial Delay
-    ESP_LOGI(TAG, "Initial delay for 5 seconds...");
+    ESP_LOGI(TAG, "Device is AWAKE. Initial delay for 5 seconds...");
     vTaskDelay(pdMS_TO_TICKS(5000));
 
     // 2. Hello World & LED Blink
     ESP_LOGI(TAG, "Hello World!");
     ESP_LOGI(TAG, "Blinking LED 5 times...");
-    led_blink(5, 500);
+    led_blink(5, 500); // This will leave the LED OFF
+
+    // Turn LED back on for the rest of the awake time
+    gpio_set_level(LED_GPIO, 0); // LED ON
 
     // 3. I2C Scan
     ESP_ERROR_CHECK(i2c_master_init());
@@ -85,8 +132,7 @@ void app_main(void)
     ESP_ERROR_CHECK(i2c_driver_delete(I2C_MASTER_NUM));
 
     // 4. Countdown
-    ESP_LOGI(TAG, "LED ON for 30 seconds countdown...");
-    gpio_set_level(LED_GPIO, 0); // LED ON
+    ESP_LOGI(TAG, "LED is ON for 30 seconds countdown...");
     for (int i = 30; i > 0; i--) {
         ESP_LOGI(TAG, "Countdown: %d", i);
         vTaskDelay(pdMS_TO_TICKS(1000));
