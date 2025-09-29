@@ -19,6 +19,8 @@ static int idle_loops = 0;
 
 void app_main(void)
 {
+    // A short delay to allow peripherals to power on before initialization.
+    vTaskDelay(200 / portTICK_PERIOD_MS);
     while (1) {
         switch (current_state) {
             case APP_STATE_INIT:
@@ -31,6 +33,7 @@ void app_main(void)
 
             case APP_STATE_IDLE:
                 printf("Entering state: IDLE (%d/100)\n", idle_loops);
+                hardware_set_led(idle_loops % 2 == 0); // Blink the LED
                 if (++idle_loops >= 100) {
                     current_state = APP_STATE_DEEPSLEEP;
                 }
@@ -46,9 +49,10 @@ void app_main(void)
                 // The code below this line will not be executed.
                 break;
             
-default:
-                printf("Unknown state, resetting to INIT\n");
-                current_state = APP_STATE_INIT;
+            default:
+                printf("Error: Unknown application state!\n");
+                // Stay in this state and do nothing.
+                // A watchdog timer would eventually reset the device.
                 break;
         }
         // A small delay to prevent the loop from spinning without yielding

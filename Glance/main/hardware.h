@@ -1,6 +1,8 @@
 #ifndef HARDWARE_H
 #define HARDWARE_H
 
+#include <stdbool.h>
+
 // Define GPIO pins according to the hardware v2.1 specification
 
 // Power Control
@@ -31,5 +33,6 @@
 
 void hardware_init(void);
 void hardware_deinit(void);
+void hardware_set_led(bool on);
 
 #endif // HARDWARE_H
