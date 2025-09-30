@@ -31,6 +31,7 @@
 #define PIN_I2C_ALRT    10  // Fuel Gauge Alert
 
 void hardware_init(void);
+void display_hardware_init(void);
 void hardware_deinit(void);
 void hardware_set_led(bool on);
 

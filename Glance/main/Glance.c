@@ -2,15 +2,19 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_sleep.h"
+#include "esp_log.h"
 #include "hardware.h"
+#include "wifi_manager.h"
 
 /**
  * @brief Application states
  */
 typedef enum {
     APP_STATE_INIT,
+    APP_STATE_WIFI_CONNECT,
     APP_STATE_IDLE,
     APP_STATE_DEEPSLEEP,
+    APP_STATE_ERROR,
 } app_state_t;
 
 // Set the initial state
@@ -26,9 +30,21 @@ void app_main(void)
             case APP_STATE_INIT:
                 printf("Entering state: INIT\n");
                 hardware_init();
-                // Transition to the next state
-                current_state = APP_STATE_IDLE;
-                idle_loops = 0; // Reset idle loop counter
+                current_state = APP_STATE_WIFI_CONNECT;
+                break;
+
+            case APP_STATE_WIFI_CONNECT:
+                printf("Entering state: WIFI_CONNECT\n");
+                hardware_set_led(true); // Turn LED on while connecting
+                if (wifi_connect()) {
+                    display_hardware_init(); // Initialize display hardware after Wi-Fi
+                    current_state = APP_STATE_IDLE;
+                    idle_loops = 0; // Reset idle loop counter
+                } else {
+                    printf("Wi-Fi connection failed.\n");
+                    current_state = APP_STATE_ERROR;
+                }
+                hardware_set_led(false); // Turn LED off
                 break;
 
             case APP_STATE_IDLE:
@@ -41,18 +57,21 @@ void app_main(void)
 
             case APP_STATE_DEEPSLEEP:
                 printf("Entering state: DEEPSLEEP\n");
+                wifi_disconnect();
                 hardware_deinit();
                 
                 printf("Entering deep sleep now.\n");
-                // The device will restart after waking up from deep sleep.
                 esp_deep_sleep_start();
-                // The code below this line will not be executed.
                 break;
             
-            default:
-                printf("Error: Unknown application state!\n");
-                // Stay in this state and do nothing.
-                // A watchdog timer would eventually reset the device.
+default:
+            case APP_STATE_ERROR:
+                printf("Entering state: ERROR\n");
+                // Stay in this state and blink LED rapidly to indicate error
+                hardware_set_led(true);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                hardware_set_led(false);
+                vTaskDelay(100 / portTICK_PERIOD_MS);
                 break;
         }
         // A small delay to prevent the loop from spinning without yielding
