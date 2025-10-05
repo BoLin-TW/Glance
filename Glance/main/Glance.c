@@ -1,10 +1,12 @@
 #include <stdio.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_sleep.h"
 #include "esp_log.h"
 #include "hardware.h"
 #include "wifi_manager.h"
+#include "sntp_manager.h"
 
 /**
  * @brief Application states
@@ -12,6 +14,7 @@
 typedef enum {
     APP_STATE_INIT,
     APP_STATE_WIFI_CONNECT,
+    APP_STATE_SYNC_TIME,
     APP_STATE_IDLE,
     APP_STATE_DEEPSLEEP,
     APP_STATE_ERROR,
@@ -38,8 +41,7 @@ void app_main(void)
                 hardware_set_led(true); // Turn LED on while connecting
                 if (wifi_connect()) {
                     display_hardware_init(); // Initialize display hardware after Wi-Fi
-                    current_state = APP_STATE_IDLE;
-                    idle_loops = 0; // Reset idle loop counter
+                    current_state = APP_STATE_SYNC_TIME;
                 } else {
                     printf("Wi-Fi connection failed.\n");
                     current_state = APP_STATE_ERROR;
@@ -47,12 +49,42 @@ void app_main(void)
                 hardware_set_led(false); // Turn LED off
                 break;
 
+            case APP_STATE_SYNC_TIME:
+                printf("Entering state: SYNC_TIME\n");
+                hardware_set_led(true); // Turn LED on while syncing
+                if (glance_sntp_sync_time()) {
+                    current_state = APP_STATE_IDLE;
+                    idle_loops = 0; // Reset idle loop counter
+                } else {
+                    printf("Time synchronization failed.\n");
+                    current_state = APP_STATE_ERROR;
+                }
+                hardware_set_led(false); // Turn LED off
+                break;
+
             case APP_STATE_IDLE:
-                printf("Entering state: IDLE (%d/100)\n", idle_loops);
+                if (idle_loops == 0) {
+                    printf("Entering state: IDLE\n");
+                }
+
+                // Get current time
+                time_t now;
+                struct tm timeinfo;
+                time(&now);
+                localtime_r(&now, &timeinfo);
+
+                // Format and print time
+                char strftime_buf[64];
+                strftime(strftime_buf, sizeof(strftime_buf), "%c", &timeinfo);
+                printf("Current time: %s\n", strftime_buf);
+
                 hardware_set_led(idle_loops % 2 == 0); // Blink the LED
-                if (++idle_loops >= 100) {
+
+                if (++idle_loops >= 10) { // Run for 10 seconds
                     current_state = APP_STATE_DEEPSLEEP;
                 }
+                
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
                 break;
 
             case APP_STATE_DEEPSLEEP:
@@ -74,7 +106,5 @@ default:
                 vTaskDelay(100 / portTICK_PERIOD_MS);
                 break;
         }
-        // A small delay to prevent the loop from spinning without yielding
-        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
